@@ -19,6 +19,7 @@ export interface Lead {
   ultimaInteracao?: string;
   proximoFollowup?: string;
   interactions: Interaction[];
+  etiquetaHistory: EtiquetaHistory[];
 }
 
 export interface Interaction {
@@ -28,6 +29,18 @@ export interface Interaction {
   descricao: string;
   data: string;
   usuario: string;
+}
+
+export interface EtiquetaHistory {
+  id: string;
+  historyId?: string;
+  leadId: string;
+  nomeLead?: string; // Nome do lead para identificação
+  etiquetaAnterior: string;
+  etiquetaNova: string;
+  data: string;
+  usuario: string;
+  motivo?: string;
 }
 
 export interface DashboardStats {

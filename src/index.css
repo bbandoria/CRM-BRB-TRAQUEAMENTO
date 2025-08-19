@@ -101,3 +101,51 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Forçar alinhamento e largura fixa no calendário react-day-picker */
+.rdp-table, .rdp-table thead, .rdp-table tbody, .rdp-table tr, .rdp-table th, .rdp-table td {
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  text-align: center !important;
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px !important;
+  box-sizing: border-box !important;
+}
+
+/* Garantir que o calendário fique centralizado */
+.rdp-table {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* Forçar display: table-cell nos td do calendário, mesmo com inline-flex */
+.rdp-table td,
+.rdp-table th,
+.rdp-table td[role="gridcell"],
+.rdp-table th[role="columnheader"] {
+  display: table-cell !important;
+  vertical-align: middle !important;
+  text-align: center !important;
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.rdp-table td > div {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  justify-content: center !important;
+  align-items: center !important;
+}

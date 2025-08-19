@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, ReferenceLine } from 'recharts';
 import { 
   Users, 
   UserPlus, 
@@ -71,6 +71,16 @@ export default function CRMDashboard() {
     }
   }, []);
 
+  // Iniciar auto-sync automaticamente quando houver cliente com planilhas configuradas
+  // Desativado auto-start para reduzir carga; usuário controla pelo botão
+  // useEffect(() => {
+  //   if (currentClient?.sheetId && currentClient?.historicoEtiquetasSheetId) {
+  //     clientDataService.startAutoSync(10000); // 10s
+  //     console.log('🚀 Auto-sync iniciado automaticamente');
+  //     return () => clientDataService.stopAutoSync();
+  //   }
+  // }, [currentClient?.sheetId, currentClient?.historicoEtiquetasSheetId]);
+
   // Auto-refresh apenas se houver sheetId configurado
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -87,6 +97,28 @@ export default function CRMDashboard() {
       }
     };
   }, [autoRefresh, currentClient]);
+
+  // Listener para atualizações automáticas de leads
+  useEffect(() => {
+    const handleLeadsUpdated = (event: CustomEvent) => {
+      console.log('🔄 Leads atualizados automaticamente:', event.detail);
+      
+      // Recarregar dados se houver mudanças
+      if (event.detail.changes && event.detail.changes.length > 0) {
+        loadSheetsData();
+        
+        // Log silencioso (sem notificação)
+        const changesCount = event.detail.changes.length;
+        console.log(`🔄 ${changesCount} mudança${changesCount > 1 ? 's' : ''} detectada${changesCount > 1 ? 's' : ''} na planilha - sincronizando automaticamente`);
+      }
+    };
+
+    window.addEventListener('leadsUpdated', handleLeadsUpdated as EventListener);
+    
+    return () => {
+      window.removeEventListener('leadsUpdated', handleLeadsUpdated as EventListener);
+    };
+  }, []);
 
   const loadSheetsData = async () => {
     if (!currentClient?.sheetId) return;
@@ -176,7 +208,13 @@ export default function CRMDashboard() {
 
       let matchesOrigem = true;
       if (selectedOrigemFilter) {
-        matchesOrigem = lead.origem === selectedOrigemFilter;
+        if (selectedOrigemFilter === 'GOOGLE_GROUPED') {
+          // Para Google agrupado, verificar se a origem é uma das origens do Google
+          const googleOrigins = ['click_to_chat_link', 'global_search_new_chat', 'phone_number_hyperlink'];
+          matchesOrigem = googleOrigins.includes(lead.origem.toLowerCase());
+        } else {
+          matchesOrigem = lead.origem === selectedOrigemFilter;
+        }
       }
       
       let matchesDate = true;
@@ -214,7 +252,7 @@ export default function CRMDashboard() {
 
     const leadsQualificados = filteredLeads.filter(lead => {
       const etiqueta = lead.etapaEtiquetas?.trim().toLowerCase() || '';
-      return etiqueta.includes('qualificado') || etiqueta.includes('orçamento') || etiqueta.includes('orçamentos');
+      return etiqueta.includes('qualificado') || etiqueta.includes('orçamento') || etiqueta.includes('orçamentos') || etiqueta.includes('negociação');
     }).length;
     
     const negociosFechados = filteredLeads.filter(lead => 
@@ -236,9 +274,55 @@ export default function CRMDashboard() {
     };
   }, [filteredLeads, currentClient]);
 
+  // Função para mapear nomes das origens
+  const mapOrigemName = (origem: string): string => {
+    switch (origem.toLowerCase()) {
+      case 'fb_ads':
+        return 'Facebook';
+      case 'google sheets':
+        return 'Planilha';
+      case 'click_to_chat_link':
+      case 'global_search_new_chat':
+      case 'phone_number_hyperlink':
+        return 'Google';
+      default:
+        return origem;
+    }
+  };
+
+  // Função para obter o nome original da origem a partir do nome mapeado
+  const getOriginalOrigemName = (mappedName: string): string => {
+    switch (mappedName) {
+      case 'Facebook':
+        return 'FB_Ads';
+      case 'Planilha':
+        return 'Google Sheets';
+      case 'Google':
+        // Para Google, retornar uma string especial que será tratada no filtro
+        return 'GOOGLE_GROUPED';
+      default:
+        return mappedName;
+    }
+  };
+
   // Dados para o gráfico de origem dos leads
   const origemChartData = useMemo(() => {
-    return Object.entries(stats.leadsPorOrigem).map(([origem, count]) => ({
+    // Agrupar origens do Google em uma única entrada
+    const groupedOrigins: Record<string, number> = {};
+    
+    Object.entries(stats.leadsPorOrigem).forEach(([origem, count]) => {
+      const mappedName = mapOrigemName(origem);
+      
+      if (mappedName === 'Google') {
+        // Agrupar todas as origens do Google
+        groupedOrigins['Google'] = (groupedOrigins['Google'] || 0) + count;
+      } else {
+        // Manter outras origens como estão
+        groupedOrigins[mappedName] = (groupedOrigins[mappedName] || 0) + count;
+      }
+    });
+    
+    return Object.entries(groupedOrigins).map(([origem, count]) => ({
       origem,
       count,
       percentage: stats.totalLeads > 0 ? ((count / stats.totalLeads) * 100).toFixed(1) : '0'
@@ -332,6 +416,10 @@ export default function CRMDashboard() {
       const weekEnd = new Date(today);
       weekEnd.setDate(today.getDate() - (i * 7));
       
+      // Formatar datas para dd/MM
+      const format = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth()+1).padStart(2, '0')}`;
+      const periodo = `${format(weekStart)} a ${format(weekEnd)}`;
+      
       const weekLeads = leads.filter(lead => {
         const leadDate = lead.data.split(' ')[0];
         const [day, month, year] = leadDate.split('/');
@@ -341,15 +429,20 @@ export default function CRMDashboard() {
       
       const totalWeekLeads = weekLeads.length;
       const conversionTags = (currentClient?.etiquetasConversao || conversionTagsOverride).map(tag => tag.toLowerCase());
+      
+      // Usar as etiquetas de conversão configuradas ou as padrão
       const fechadosWeek = weekLeads.filter(lead => {
         const etiqueta = lead.etapaEtiquetas?.toLowerCase() || '';
-        return etiqueta.includes('fechado') || etiqueta.includes('negocio fechado');
+        if (conversionTags.length > 0) {
+          return conversionTags.some(tag => etiqueta.includes(tag));
+        }
+        return etiqueta.includes('fechado') || etiqueta.includes('negocio fechado') || etiqueta.includes('venda concluida');
       }).length;
       
       const taxa = totalWeekLeads > 0 ? (fechadosWeek / totalWeekLeads) * 100 : 0;
       
       weeks.push({
-        semana: `Sem ${i + 1}`,
+        periodo,
         taxa: parseFloat(taxa.toFixed(1)),
         total: totalWeekLeads,
         fechados: fechadosWeek
@@ -379,6 +472,79 @@ export default function CRMDashboard() {
     if (currentClient) {
       clientDataService.saveClientLeads(currentClient.id, leads);
     }
+  };
+
+  // Função para limpar duplicidades de etiquetas
+  const cleanDuplicates = async () => {
+    try {
+      setIsLoading(true);
+      const result = await clientDataService.cleanAllDuplicates();
+      
+      if (result.totalDuplicates > 0) {
+        // Recarregar dados após limpeza
+        await loadSheetsData();
+        console.log(`✅ Limpeza concluída! ${result.cleaned} leads limpos, ${result.totalDuplicates} duplicatas removidas.`);
+      } else {
+        console.log('✅ Nenhuma duplicata encontrada para remoção.');
+      }
+    } catch (error) {
+      console.error('Erro ao limpar duplicidades:', error);
+      console.log('❌ Erro ao limpar duplicidades. Verifique o console para mais detalhes.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Função para verificar duplicidades
+  const checkDuplicates = () => {
+    try {
+      const duplicates = clientDataService.checkAllDuplicates();
+      
+      if (duplicates.length > 0) {
+        const totalDuplicates = duplicates.reduce((sum, item) => sum + item.duplicates, 0);
+              console.log(`🔍 Encontradas ${duplicates.length} leads com duplicatas (total: ${totalDuplicates} duplicatas)`);
+      console.log('Duplicatas encontradas:', duplicates);
+    } else {
+      console.log('✅ Nenhuma duplicata encontrada!');
+      }
+    } catch (error) {
+      console.error('Erro ao verificar duplicidades:', error);
+      console.log('❌ Erro ao verificar duplicatas.');
+    }
+  };
+
+  // Função para controlar sincronização automática
+  const toggleAutoSync = () => {
+    if (clientDataService.isAutoSyncActive()) {
+      clientDataService.stopAutoSync();
+      console.log('⏹️ Sincronização automática parada');
+    } else {
+      clientDataService.startAutoSync(10000); // 10 segundos
+      console.log('🚀 Sincronização automática iniciada (a cada 10 segundos)');
+    }
+  };
+
+  // Função para sincronização manual imediata
+  const syncNow = async () => {
+    try {
+      setIsLoading(true);
+      await loadSheetsData();
+      console.log('✅ Sincronização manual concluída!');
+    } catch (error) {
+      console.error('Erro na sincronização manual:', error);
+      console.log('❌ Erro na sincronização manual');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Função para obter status da sincronização
+  const getSyncStatus = () => {
+    const status = clientDataService.getSyncStatus();
+    const message = status.isActive 
+      ? `🟢 Ativa - Última: ${new Date(status.lastSync).toLocaleTimeString('pt-BR')}`
+      : '🔴 Parada';
+    console.log(`📊 Status da Sincronização:\n${message}`);
   };
 
   const addInteraction = (leadId: string, interaction: Omit<Interaction, 'id' | 'leadId'>) => {
@@ -433,10 +599,14 @@ export default function CRMDashboard() {
   };
 
   const handleOrigemClick = (origem: string) => {
-    if (selectedOrigemFilter === origem) {
+    // origem aqui é o nome mapeado (ex: "Facebook", "Planilha", "Google")
+    // Precisamos converter para o nome original para o filtro funcionar
+    const originalOrigem = getOriginalOrigemName(origem);
+    
+    if (selectedOrigemFilter === originalOrigem) {
       setSelectedOrigemFilter('');
     } else {
-      setSelectedOrigemFilter(origem);
+      setSelectedOrigemFilter(originalOrigem);
     }
   };
 
@@ -468,6 +638,21 @@ export default function CRMDashboard() {
                   <p className="text-muted-foreground mt-2">
                     Gerencie seus leads de forma eficiente e organizada
                   </p>
+                  
+                  {/* Status da Sincronização */}
+                  <div className="flex items-center gap-2 mt-3">
+                    <div className={`w-3 h-3 rounded-full ${
+                      clientDataService.isAutoSyncActive() ? 'bg-green-500' : 'bg-red-500'
+                    }`}></div>
+                    <span className="text-sm text-muted-foreground">
+                      Sincronização: {clientDataService.isAutoSyncActive() ? 'Ativa' : 'Parada'}
+                    </span>
+                    {clientDataService.isAutoSyncActive() && (
+                      <span className="text-xs text-muted-foreground">
+                        (a cada 10s)
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-4">
                   {currentClient?.sheetId && (
@@ -554,7 +739,7 @@ export default function CRMDashboard() {
                           className="flex items-center gap-2 cursor-pointer"
                           onClick={() => setSelectedOrigemFilter('')}
                         >
-                          Origem: {selectedOrigemFilter}
+                          Origem: {mapOrigemName(selectedOrigemFilter)}
                           <span className="text-xs">✕</span>
                         </Badge>
                       )}
@@ -596,7 +781,7 @@ export default function CRMDashboard() {
                     <CardContent>
                       <div className="text-2xl font-bold">{stats.novosLeads}</div>
                       <p className="text-xs text-green-200">
-                        Leads sem contato
+                        Leads sem etiquetas
                       </p>
                     </CardContent>
                   </Card>
@@ -669,33 +854,203 @@ export default function CRMDashboard() {
                   </Card>
 
                   {/* Taxa de Conversão das Últimas 4 Semanas */}
-                  <Card className="border-0 shadow-lg">
-                    <CardHeader>
-                      <CardTitle>Taxa de Conversão - 4 Semanas</CardTitle>
-                      <p className="text-sm text-muted-foreground">Baseado na etiqueta "fechado" e "negocio fechado"</p>
+                  <Card className="border-0 shadow-lg bg-gradient-to-br from-white to-blue-50">
+                    <CardHeader className="pb-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                            <TrendingUp className="w-6 h-6 text-blue-600" />
+                            Taxa de Conversão - 4 Semanas
+                          </CardTitle>
+                          <p className="text-sm text-gray-600 mt-1">
+                            Baseado na etiqueta
+                            {currentClient?.etiquetasConversao && currentClient.etiquetasConversao.length > 0
+                              ? ` "${currentClient.etiquetasConversao.join('" e "')}"`
+                              : ' "fechado" e "negocio fechado"'}
+                          </p>
+                          {/* Barra de progresso visual */}
+                          <div className="mt-3">
+                            <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                              <span>Meta: 10%</span>
+                              <span>Atual: {weeklyConversionData.length > 0 ? weeklyConversionData[weeklyConversionData.length - 1]?.taxa || 0 : 0}%</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div 
+                                className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all duration-1000 ease-out"
+                                style={{ 
+                                  width: `${Math.min((weeklyConversionData.length > 0 ? weeklyConversionData[weeklyConversionData.length - 1]?.taxa || 0 : 0) * 10, 100)}%` 
+                                }}
+                              ></div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold text-blue-600">
+                            {weeklyConversionData.length > 0 ? weeklyConversionData[weeklyConversionData.length - 1]?.taxa || 0 : 0}%
+                          </div>
+                          <div className="text-xs text-gray-500">Taxa Atual</div>
+                          {weeklyConversionData.length >= 2 && (
+                            <div className={`text-xs mt-1 ${
+                              weeklyConversionData[weeklyConversionData.length - 1]?.taxa > weeklyConversionData[weeklyConversionData.length - 2]?.taxa
+                                ? 'text-green-600'
+                                : weeklyConversionData[weeklyConversionData.length - 1]?.taxa < weeklyConversionData[weeklyConversionData.length - 2]?.taxa
+                                ? 'text-red-600'
+                                : 'text-gray-500'
+                            }`}>
+                              {weeklyConversionData[weeklyConversionData.length - 1]?.taxa > weeklyConversionData[weeklyConversionData.length - 2]?.taxa
+                                ? '↗ Crescendo'
+                                : weeklyConversionData[weeklyConversionData.length - 1]?.taxa < weeklyConversionData[weeklyConversionData.length - 2]?.taxa
+                                ? '↘ Diminuindo'
+                                : '→ Estável'
+                              }
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </CardHeader>
-                    <CardContent>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <LineChart data={weeklyConversionData}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="semana" />
-                          <YAxis />
+                    <CardContent className="pt-0">
+                      <ResponsiveContainer width="100%" height={280}>
+                        <LineChart data={weeklyConversionData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                          <defs>
+                            <linearGradient id="conversionGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.01}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid 
+                            strokeDasharray="3 3" 
+                            stroke="#e5e7eb" 
+                            strokeOpacity={0.5}
+                            vertical={false}
+                          />
+                          <XAxis 
+                            dataKey="periodo" 
+                            tickFormatter={(value) => value}
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 12, fill: '#6b7280' }}
+                            dy={10}
+                          />
+                          <YAxis 
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 12, fill: '#6b7280' }}
+                            dx={10}
+                            domain={[0, 'dataMax + 5']}
+                            tickFormatter={(value) => `${value}%`}
+                          />
+                          {/* Linha de referência para meta (exemplo: 10%) */}
+                          <ReferenceLine 
+                            y={10} 
+                            stroke="#ef4444" 
+                            strokeDasharray="3 3" 
+                            strokeOpacity={0.6}
+                            label={{ 
+                              value: "Meta 10%", 
+                              position: "insideRight",
+                              fill: "#ef4444",
+                              fontSize: 10
+                            }}
+                          />
                           <Tooltip 
-                            formatter={(value, name) => [
-                              `${value}%`, 
-                              'Taxa de Conversão'
-                            ]}
-                            labelFormatter={(label) => `Semana: ${label}`}
+                            content={({ active, payload, label }) => {
+                              if (active && payload && payload.length) {
+                                const data = payload[0].payload;
+                                const performance = data.taxa >= 10 ? 'excelente' : data.taxa >= 5 ? 'bom' : data.taxa > 0 ? 'regular' : 'baixo';
+                                const performanceColor = data.taxa >= 10 ? 'text-green-600' : data.taxa >= 5 ? 'text-blue-600' : data.taxa > 0 ? 'text-yellow-600' : 'text-gray-500';
+                                
+                                return (
+                                  <div className="bg-white p-4 rounded-lg shadow-xl border border-gray-200 max-w-xs">
+                                    <div className="flex items-center justify-between mb-3">
+                                      <div className="font-bold text-gray-800 text-sm">{label}</div>
+                                      <div className={`text-xs px-2 py-1 rounded-full ${
+                                        data.taxa >= 10 ? 'bg-green-100 text-green-700' : 
+                                        data.taxa >= 5 ? 'bg-blue-100 text-blue-700' : 
+                                        data.taxa > 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-700'
+                                      }`}>
+                                        {performance}
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <div className="flex justify-between items-center">
+                                        <span className="text-gray-600 text-sm">Taxa de Conversão:</span>
+                                        <span className={`font-bold text-lg ${performanceColor}`}>{data.taxa}%</span>
+                                      </div>
+                                      <div className="flex justify-between items-center">
+                                        <span className="text-gray-600 text-sm">Total de Leads:</span>
+                                        <span className="font-semibold text-gray-800">{data.total}</span>
+                                      </div>
+                                      <div className="flex justify-between items-center">
+                                        <span className="text-gray-600 text-sm">Negócios Fechados:</span>
+                                        <span className="font-semibold text-green-600">{data.fechados}</span>
+                                      </div>
+                                      {data.total > 0 && (
+                                        <div className="mt-3 pt-2 border-t border-gray-100">
+                                          <div className="text-xs text-gray-500">
+                                            {data.fechados} de {data.total} leads convertidos
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Area 
+                            type="monotone" 
+                            dataKey="taxa" 
+                            stroke="transparent" 
+                            fill="url(#conversionGradient)"
+                            fillOpacity={0.3}
                           />
                           <Line 
                             type="monotone" 
                             dataKey="taxa" 
-                            stroke="#8884d8" 
-                            strokeWidth={2}
-                            dot={{ fill: '#8884d8', strokeWidth: 2, r: 4 }}
+                            stroke="#3b82f6" 
+                            strokeWidth={3}
+                            dot={{ 
+                              fill: '#ffffff', 
+                              stroke: '#3b82f6', 
+                              strokeWidth: 3, 
+                              r: 6,
+                              filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))'
+                            }}
+                            activeDot={{ 
+                              r: 8, 
+                              stroke: '#ffffff', 
+                              strokeWidth: 3,
+                              fill: '#3b82f6',
+                              filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.2))'
+                            }}
                           />
                         </LineChart>
                       </ResponsiveContainer>
+                      
+                      {/* Estatísticas rápidas abaixo do gráfico */}
+                      <div className="grid grid-cols-4 gap-3 mt-6 pt-4 border-t border-gray-100">
+                        {weeklyConversionData.map((week, index) => (
+                          <div key={index} className="text-center p-3 rounded-lg bg-white border border-gray-100 hover:border-blue-200 transition-colors">
+                            <div className={`text-xl font-bold ${
+                              week.taxa > 0 ? 'text-green-600' : 'text-gray-400'
+                            }`}>
+                              {week.taxa}%
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1 font-medium">
+                              {week.periodo}
+                            </div>
+                            <div className="text-xs text-gray-400 mt-1">
+                              {week.total} leads
+                            </div>
+                            {week.fechados > 0 && (
+                              <div className="text-xs text-green-600 font-medium mt-1">
+                                +{week.fechados} fechados
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </CardContent>
                   </Card>
                 </div>
@@ -898,6 +1253,58 @@ export default function CRMDashboard() {
                         />
                       </div>
                     </div>
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={checkDuplicates}
+                        className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                      >
+                        🔍 Verificar Duplicatas
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={cleanDuplicates}
+                        disabled={isLoading}
+                        className="text-orange-600 border-orange-200 hover:bg-orange-50"
+                      >
+                        {isLoading ? '🧹 Limpando...' : '🧹 Limpar Duplicatas'}
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  {/* Controles de Sincronização */}
+                  <div className="flex gap-2 mt-4">
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={toggleAutoSync}
+                      className={`${
+                        clientDataService.isAutoSyncActive() 
+                          ? 'text-green-600 border-green-200 hover:bg-green-50' 
+                          : 'text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      {clientDataService.isAutoSyncActive() ? '⏹️ Parar Sync' : '🚀 Iniciar Sync'}
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={syncNow}
+                      disabled={isLoading}
+                      className="text-purple-600 border-purple-200 hover:bg-purple-50"
+                    >
+                      {isLoading ? '🔄 Sincronizando...' : '🔄 Sincronizar Agora'}
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={getSyncStatus}
+                      className="text-indigo-600 border-indigo-200 hover:bg-indigo-50"
+                    >
+                      📊 Status Sync
+                    </Button>
                   </div>
                   <DateRangeFilter
                     startDate={startDate}
@@ -965,17 +1372,17 @@ export default function CRMDashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
-                        {Object.entries(stats.leadsPorOrigem).map(([origem, count]) => (
-                          <div key={origem} className="flex items-center justify-between">
-                            <span className="text-sm font-medium">{origem}</span>
+                        {origemChartData.map((entry) => (
+                          <div key={entry.origem} className="flex items-center justify-between">
+                            <span className="text-sm font-medium">{entry.origem}</span>
                             <div className="flex items-center gap-2">
                               <div className="w-32 bg-gray-200 rounded-full h-2">
                                 <div 
                                   className="bg-gradient-to-r from-blue-500 to-indigo-500 h-2 rounded-full transition-all duration-300"
-                                  style={{ width: `${stats.totalLeads > 0 ? (count / stats.totalLeads) * 100 : 0}%` }}
+                                  style={{ width: `${entry.percentage}%` }}
                                 />
                               </div>
-                              <span className="text-sm text-muted-foreground">{count}</span>
+                              <span className="text-sm text-muted-foreground">{entry.count}</span>
                             </div>
                           </div>
                         ))}
