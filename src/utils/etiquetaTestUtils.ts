@@ -215,3 +215,5 @@ if (typeof window !== 'undefined') {
   console.log('  - runAllTestsWithSync(leadId) - Todos os testes + sincronização');
   console.log('  - generateStatusReport() - Inclui status da sincronização');
 }
+
+

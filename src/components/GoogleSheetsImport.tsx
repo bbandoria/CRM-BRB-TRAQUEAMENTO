@@ -10,6 +10,8 @@ import { Lead } from '@/types/lead';
 import { clientDataService } from '@/services/clientDataService';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { authService } from '@/services/authService';
+import { supabaseService } from '@/services/supabaseService';
+import { MigrationTool } from './MigrationTool';
 
 interface GoogleSheetsImportProps {
   onImportSuccess: (leads: Lead[], sheetId?: string) => void;
@@ -134,7 +136,7 @@ export const GoogleSheetsImport: React.FC<GoogleSheetsImportProps> = ({
 
   const handlePreview = async () => {
     if (!sheetUrl.trim()) {
-      setError('Por favor, insira a URL da planilha');
+      setError('Por favor, insira a URL da planilha ou faça upload do arquivo CSV');
       return;
     }
 
@@ -142,31 +144,42 @@ export const GoogleSheetsImport: React.FC<GoogleSheetsImportProps> = ({
     setError('');
 
     try {
-      const sheetId = extractSheetId(sheetUrl);
-      if (!sheetId) {
-        throw new Error('URL da planilha inválida. Certifique-se de usar uma URL do Google Sheets válida.');
+      let csvText: string;
+      let title: string;
+
+      // Verificar se é uma URL do Google Sheets ou um arquivo CSV
+      if (sheetUrl.includes('docs.google.com') || sheetUrl.includes('spreadsheets')) {
+        const sheetId = extractSheetId(sheetUrl);
+        if (!sheetId) {
+          throw new Error('URL da planilha inválida. Certifique-se de usar uma URL do Google Sheets válida.');
+        }
+
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
+        title = extractSheetTitle(sheetUrl);
+        
+        console.log('Tentando importar de:', csvUrl);
+
+        const response = await fetch(csvUrl, {
+          mode: 'cors'
+        });
+
+        if (!response.ok) {
+          throw new Error('Erro ao acessar a planilha. Verifique se ela está pública e acessível.');
+        }
+
+        csvText = await response.text();
+      } else {
+        // Tratar como conteúdo CSV direto
+        csvText = sheetUrl;
+        title = 'Arquivo CSV';
       }
 
-      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
-      const title = extractSheetTitle(sheetUrl);
-      
-      console.log('Tentando importar de:', csvUrl);
-
-      const response = await fetch(csvUrl, {
-        mode: 'cors'
-      });
-
-      if (!response.ok) {
-        throw new Error('Erro ao acessar a planilha. Verifique se ela está pública e acessível.');
-      }
-
-      const csvText = await response.text();
       console.log('Dados CSV recebidos:', csvText.substring(0, 200) + '...');
 
       const leads = await parseCSVData(csvText);
       
       if (leads.length === 0) {
-        throw new Error('Nenhum lead foi encontrado na planilha. Verifique o formato dos dados.');
+        throw new Error('Nenhum lead foi encontrado no CSV. Verifique o formato dos dados.');
       }
 
       setSheetTitle(title);
@@ -175,29 +188,44 @@ export const GoogleSheetsImport: React.FC<GoogleSheetsImportProps> = ({
 
     } catch (err: any) {
       console.error('Erro na importação:', err);
-      setError(err.message || 'Erro ao importar dados da planilha');
+      setError(err.message || 'Erro ao importar dados');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleConfirmImport = () => {
-    const sheetId = extractSheetId(sheetUrl);
-    console.log('Leads importados:', previewLeads);
-    console.log('Atualização automática habilitada:', autoUpdate);
-    
-    onImportSuccess(previewLeads, sheetId || undefined);
-    
-    if (onDataImported) {
-      onDataImported(previewLeads);
+  const handleConfirmImport = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Importar leads para o Supabase
+      const importedLeads = await supabaseService.importLeadsFromCSV(
+        sheetUrl.includes('docs.google.com') || sheetUrl.includes('spreadsheets') 
+          ? await fetch(`https://docs.google.com/spreadsheets/d/${extractSheetId(sheetUrl)}/export?format=csv&gid=0`).then(r => r.text())
+          : sheetUrl
+      );
+      
+      console.log('Leads importados para o Supabase:', importedLeads);
+      console.log('Atualização automática habilitada:', autoUpdate);
+      
+      onImportSuccess(importedLeads);
+      
+      if (onDataImported) {
+        onDataImported(importedLeads);
+      }
+      
+      setSuccess(true);
+      
+      setTimeout(() => {
+        setShowConfirmation(false);
+        setSuccess(false);
+      }, 2000);
+    } catch (error: any) {
+      console.error('Erro ao importar para o Supabase:', error);
+      setError('Erro ao importar leads para o banco de dados: ' + error.message);
+    } finally {
+      setIsLoading(false);
     }
-    
-    setSuccess(true);
-    
-    setTimeout(() => {
-      setShowConfirmation(false);
-      setSuccess(false);
-    }, 2000);
   };
 
   const handleCancelImport = () => {
@@ -245,10 +273,14 @@ export const GoogleSheetsImport: React.FC<GoogleSheetsImportProps> = ({
   return (
     <div className="p-2 sm:p-4 md:p-6">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2">
+        <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3">
           <TabsTrigger value="import-leads">
             <Upload className="mr-2 h-4 w-4" />
             Importar Leads
+          </TabsTrigger>
+          <TabsTrigger value="migration-tool">
+            <Database className="mr-2 h-4 w-4" />
+            Migração
           </TabsTrigger>
           {isAdmin && (
             <TabsTrigger value="configure-clients">
@@ -267,10 +299,10 @@ export const GoogleSheetsImport: React.FC<GoogleSheetsImportProps> = ({
               {!showConfirmation ? (
                 <div className="space-y-4">
                   <div>
-                    <Label htmlFor="sheet-url">URL da Planilha</Label>
+                    <Label htmlFor="sheet-url">URL da Planilha ou Conteúdo CSV</Label>
                     <Input
                       id="sheet-url"
-                      placeholder="https://docs.google.com/spreadsheets/d/..."
+                      placeholder="https://docs.google.com/spreadsheets/d/... ou cole o conteúdo CSV aqui"
                       value={sheetUrl}
                       onChange={(e) => setSheetUrl(e.target.value)}
                     />
@@ -289,7 +321,7 @@ export const GoogleSheetsImport: React.FC<GoogleSheetsImportProps> = ({
                   </Button>
                   
                   <p className="text-xs text-muted-foreground mt-2">
-                    Certifique-se de que sua planilha esteja com permissão "Qualquer pessoa com o link" pode visualizar.
+                    Você pode inserir uma URL do Google Sheets ou colar diretamente o conteúdo CSV. Para planilhas, certifique-se de que esteja com permissão "Qualquer pessoa com o link" pode visualizar.
                   </p>
                 </div>
               ) : (
@@ -344,6 +376,10 @@ export const GoogleSheetsImport: React.FC<GoogleSheetsImportProps> = ({
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="migration-tool">
+          <MigrationTool onClose={onClose} />
         </TabsContent>
 
         {isAdmin && (

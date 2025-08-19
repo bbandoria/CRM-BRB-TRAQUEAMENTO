@@ -110,3 +110,5 @@ window.addEventListener('etiquetaChanged', (event) => {
 - [ ] Agendamento automático de limpeza de duplicatas
 - [ ] Relatórios detalhados de duplicatas por período
 - [ ] Integração com webhooks para sincronização ainda mais rápida
+
+

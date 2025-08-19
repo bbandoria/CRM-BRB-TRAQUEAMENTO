@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Supabase</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <h1>Teste de Conexão Supabase</h1>
+    <div id="status">Testando conexão...</div>
+    <div id="result"></div>
+
+    <script>
+        const supabaseUrl = 'https://edsmxovrlppggjivqbtp.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkc214b3ZybHBwZ2dqaXZxYnRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzgwNzQwMzIsImV4cCI6MjA1MzY1MDAzMn0.UudMKmO8Cq26IacbBmqs1Bq2LBtpomgPtAvXpPqMluw';
+        
+        const supabase = supabase.createClient(supabaseUrl, supabaseKey);
+        
+        async function testConnection() {
+            try {
+                document.getElementById('status').textContent = 'Conectando...';
+                
+                // Testar conexão básica
+                const { data, error } = await supabase
+                    .from('client_configs')
+                    .select('*')
+                    .limit(1);
+                
+                if (error) {
+                    throw error;
+                }
+                
+                document.getElementById('status').textContent = '✅ Conexão bem-sucedida!';
+                document.getElementById('result').innerHTML = `
+                    <h3>Dados encontrados:</h3>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+                
+                // Testar tabelas do cliente BRB
+                const { data: leadsData, error: leadsError } = await supabase
+                    .from('leads_brbmarketingdigital')
+                    .select('*')
+                    .limit(1);
+                
+                if (leadsError) {
+                    document.getElementById('result').innerHTML += `
+                        <h3>❌ Erro ao acessar tabela leads:</h3>
+                        <pre>${leadsError.message}</pre>
+                    `;
+                } else {
+                    document.getElementById('result').innerHTML += `
+                        <h3>✅ Tabela leads acessível:</h3>
+                        <pre>${JSON.stringify(leadsData, null, 2)}</pre>
+                    `;
+                }
+                
+            } catch (error) {
+                document.getElementById('status').textContent = '❌ Erro na conexão';
+                document.getElementById('result').innerHTML = `
+                    <h3>Erro:</h3>
+                    <pre>${error.message}</pre>
+                `;
+            }
+        }
+        
+        testConnection();
+    </script>
+</body>
+</html>

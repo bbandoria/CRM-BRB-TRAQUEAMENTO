@@ -5,3 +5,4 @@ export const testFunction = () => {
   console.log('🧪 Função de teste executada!');
   return 'Teste OK';
 };
+

@@ -1079,60 +1079,34 @@ class ClientDataService {
       if (changes.length > 0) {
         console.log(`[AutoSync] 📊 ${changes.length} mudanças de etiqueta detectadas`);
         
-        // Preparar um único envio em lote para reduzir carga
-        const rowsToAppend: any[] = [];
-        const localLeads = this.getAllLeads();
-
+        // Sincronizar cada mudança
         for (const change of changes) {
+          // Aplicar mudança apenas se de fato for diferente (normalizado)
           const anteriorNorm = (change.etiquetaAnterior || '').trim().toLowerCase();
           const novaNorm = (change.etiquetaNova || '').trim().toLowerCase();
-          if (anteriorNorm === novaNorm) continue;
-
-          // Atualizar localmente o lead (etiqueta atual e histórico em memória)
-          const lead = localLeads.find(l => l.id === change.leadId);
-          if (lead) {
-            lead.etapaEtiquetas = change.etiquetaNova;
-            lead.etiquetaHistory = Array.isArray(lead.etiquetaHistory) ? lead.etiquetaHistory : [];
-            const historyId = `${change.leadId}-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
-            lead.etiquetaHistory.push({
-              id: `etiqueta_${Date.now()}`,
-              historyId,
-              leadId: change.leadId,
-              nomeLead: change.nomeLead,
-              etiquetaAnterior: change.etiquetaAnterior,
-              etiquetaNova: change.etiquetaNova,
-              data: new Date().toISOString(),
-              usuario: 'Sistema',
-              motivo: 'Sincronização automática da planilha'
-            });
-
-            // Linha para append em lote
-            rowsToAppend.push([
-              new Date().toISOString(),
-              change.leadId,
-              change.nomeLead,
-              change.etiquetaAnterior,
-              change.etiquetaNova,
-              'Sistema',
-              'Sincronização automática da planilha',
-              currentClient.nome,
-              historyId
-            ]);
+          if (anteriorNorm === novaNorm) {
+            continue;
           }
-        }
 
-        // Enviar o lote (se houver)
-        if (rowsToAppend.length > 0) {
+          await this.trackEtiquetaChange(
+            change.leadId,
+            change.etiquetaAnterior,
+            change.etiquetaNova,
+            'Sincronização automática da planilha',
+            'Sistema'
+          );
+          
+          // Forçar sincronização com Google Sheets para cada mudança
           try {
-            await googleSheetsService.appendEtiquetaHistory(currentClient.historicoEtiquetasSheetId, rowsToAppend);
-            console.log(`[AutoSync] ✅ Envio em lote concluído (${rowsToAppend.length} registro(s))`);
-          } catch (err) {
-            console.error('[AutoSync] ❌ Falha ao enviar lote para histórico:', err);
+            await this.autoSyncEtiquetaHistory(change.leadId);
+            console.log(`[AutoSync] ✅ Histórico sincronizado para lead ${change.leadId}`);
+          } catch (syncError) {
+            console.error(`[AutoSync] ❌ Erro ao sincronizar histórico para lead ${change.leadId}:`, syncError);
           }
         }
         
         // Atualizar leads locais
-        this.saveClientLeads(currentClient.id, localLeads);
+        this.saveClientLeads(currentClient.id, latestLeads);
         
         // Disparar evento para atualizar interface
         window.dispatchEvent(new CustomEvent('leadsUpdated', {

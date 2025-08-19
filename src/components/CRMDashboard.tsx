@@ -35,7 +35,7 @@ import { GoogleSheetsImport } from './GoogleSheetsImport';
 import { DateRangeFilter } from './DateRangeFilter';
 import { ClientSelector } from './ClientSelector';
 import { AdminLogin } from './AdminLogin';
-import { googleSheetsService } from '@/services/googleSheetsService';
+import { supabaseService } from '@/services/supabaseService';
 import { ClientConfig, clientDataService } from '@/services/clientDataService';
 import { authService } from '@/services/authService';
 
@@ -81,11 +81,11 @@ export default function CRMDashboard() {
   //   }
   // }, [currentClient?.sheetId, currentClient?.historicoEtiquetasSheetId]);
 
-  // Auto-refresh apenas se houver sheetId configurado
+  // Auto-refresh para o Supabase
   useEffect(() => {
     let interval: NodeJS.Timeout;
     
-    if (autoRefresh && currentClient?.sheetId) {
+    if (autoRefresh) {
       interval = setInterval(() => {
         loadSheetsData();
       }, 30000); // 30 segundos
@@ -96,7 +96,7 @@ export default function CRMDashboard() {
         clearInterval(interval);
       }
     };
-  }, [autoRefresh, currentClient]);
+  }, [autoRefresh]);
 
   // Listener para atualizações automáticas de leads
   useEffect(() => {
@@ -121,17 +121,19 @@ export default function CRMDashboard() {
   }, []);
 
   const loadSheetsData = async () => {
-    if (!currentClient?.sheetId) return;
+    if (!currentClient) return;
     
     setIsLoading(true);
     try {
-      const sheetsLeads = await googleSheetsService.fetchLeadsFromSheet(currentClient.sheetId);
-      setLeads(sheetsLeads);
-      clientDataService.saveClientLeads(currentClient.id, sheetsLeads);
-      console.log('Leads carregados:', sheetsLeads.map(l => ({ nome: l.nome, etapaEtiquetas: l.etapaEtiquetas })));
+      // Carregar leads do cliente específico do Supabase
+      const supabaseLeads = await supabaseService.fetchLeadsByClient(currentClient.id);
+      setLeads(supabaseLeads);
+      
+      clientDataService.saveClientLeads(currentClient.id, supabaseLeads);
+      console.log('Leads carregados do Supabase para o cliente:', currentClient.nome, supabaseLeads.map(l => ({ nome: l.nome, etapaEtiquetas: l.etapaEtiquetas })));
       console.log('Etiquetas de conversão do cliente:', currentClient?.etiquetasConversao);
     } catch (error) {
-      console.error('Erro ao carregar dados da planilha:', error);
+      console.error('Erro ao carregar dados do Supabase:', error);
     } finally {
       setIsLoading(false);
     }
